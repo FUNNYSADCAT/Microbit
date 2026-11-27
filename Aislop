@@ -1,18 +1,22 @@
 // ===== ปรับค่าตรงนี้ =====
 let DIR = -1
-let BASE = 255            // ใส่ได้ถึง 255
-let MIN_SPD = 70          // ความเร็วต่ำสุดตอนโค้งหนักสุด
+let BASE = 255
+let MIN_SPD = 60
 let KP = 1.6
 let KD = 3
 let DEADBAND = 30
-let SOFT_ZONE = 60        // ต้องน้อยกว่า 100 และมากกว่า DEADBAND
+let SOFT_ZONE = 60
 let STRAIGHT_SMOOTH = 0.8
 let KD_STRAIGHT = 1
-let CURVE_FULL = 70       // เบี่ยงเท่านี้ = ชะลอถึง MIN_SPD
-let BIG_KP = 1.0          // แรงเสริมตอนโค้งหนัก
+let CURVE_FULL = 60       // เบี่ยงเท่านี้ = ชะลอถึง MIN_SPD
+let BIG_KP = 1.2
+let SHARP_E = 85          // เบี่ยงเกินนี้ = เซนเซอร์นอกสุด -> เตะแรงเลี้ยวเพิ่ม
+let SHARP_KICK = 90       // แรงเตะ (เพิ่มถ้าเลี้ยวไม่ทัน)
+let CURVE_DRAG = 4        // ยิ่งอยู่ในโค้งหนักนาน ยิ่งชะลอ (ลดความเร็วต่อรอบ)
+let CURVE_MAX = 30        // เพดานสะสม
 let LOST_LIMIT = 40
-let TURN_IN = 230
-let TURN_OUT = -90
+let TURN_IN = 200         // ล้อนอกตอนหลุดเส้น
+let TURN_OUT = -160       // ล้อในตอนหลุดเส้น (ถอยแรงขึ้น)
 
 // ===== ตัวแปรระบบ =====
 let raw = 0
@@ -27,6 +31,7 @@ let gain = 0
 let l = 0
 let r = 0
 let lostCount = 0
+let curveLoad = 0
 
 function drive(left: number, right: number) {
     zoombit.setMotorsSpeed(
@@ -41,6 +46,7 @@ basic.forever(function () {
     raw = pins.analogReadPin(AnalogPin.P1)
 
     if (raw < 81) {
+        // หลุดเส้น: หมุนตัวแรงไปทางที่เห็นเส้นล่าสุด
         lostCount += 1
         if (lostCount >= LOST_LIMIT) {
             zoombit.brake()
@@ -58,6 +64,13 @@ basic.forever(function () {
 
         if (Math.abs(e) >= 10) {
             lastDir = e > 0 ? 1 : -1
+        }
+
+        // สะสมความหนักของโค้ง
+        if (Math.abs(e) >= 60) {
+            curveLoad = Math.min(CURVE_MAX, curveLoad + 1)
+        } else {
+            curveLoad = Math.max(0, curveLoad - 1)
         }
 
         if (Math.abs(e) < SOFT_ZONE) {
@@ -78,14 +91,18 @@ basic.forever(function () {
             eF = e
             corr = KP * error + KD * (error - lastError)
             corr += (error > 0 ? 1 : -1) * (Math.abs(error) - SOFT_ZONE) * BIG_KP
+            // เซนเซอร์นอกสุด: เตะแรงเลี้ยวเพิ่ม
+            if (Math.abs(error) >= SHARP_E) {
+                corr += (error > 0 ? 1 : -1) * SHARP_KICK
+            }
         }
 
-        // ชะลอตามความหักของโค้ง (สเกลตาม BASE)
+        // ชะลอตามความหักของโค้ง + ยิ่งอยู่ในโค้งนานยิ่งช้า
         spd = BASE - (BASE - MIN_SPD) * Math.min(1, Math.abs(error) / CURVE_FULL)
+        spd = Math.max(MIN_SPD, spd - curveLoad * CURVE_DRAG)
 
         l = spd + corr
         r = spd - corr
-        // ล้อนอกเกิน 255 -> หักส่วนเกินจากล้อใน เพื่อรักษาส่วนต่าง
         if (l > 255) {
             r -= (l - 255)
             l = 255
