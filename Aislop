@@ -1,18 +1,18 @@
 // ===== ปรับค่าตรงนี้ =====
 let DIR = -1
-let BASE = 170
-let MIN_SPD = 60
+let BASE = 255            // ใส่ได้ถึง 255
+let MIN_SPD = 70          // ความเร็วต่ำสุดตอนโค้งหนักสุด
 let KP = 1.6
-let KD = 5
-let DEADBAND = 25         // ครอบคลุมเซนเซอร์ข้างๆ (ยังสะบัดอยู่ให้เพิ่มเป็น 30)
-let SOFT_ZONE = 50        // ต่ำกว่านี้ = โหมดวิ่งตรงนุ่มๆ, เกินนี้ = โหมดโค้งเต็มแรง
-let STRAIGHT_SMOOTH = 0.4 // เฉลี่ยค่าตอนวิ่งตรง (ยิ่งน้อยยิ่งนุ่ม)
-let KD_STRAIGHT = 1       // KD ตอนวิ่งตรง
-let BRAKE_SLOW = 1.5
-let BIG_KP = 0.8
+let KD = 3
+let DEADBAND = 30
+let SOFT_ZONE = 60        // ต้องน้อยกว่า 100 และมากกว่า DEADBAND
+let STRAIGHT_SMOOTH = 0.8
+let KD_STRAIGHT = 1
+let CURVE_FULL = 70       // เบี่ยงเท่านี้ = ชะลอถึง MIN_SPD
+let BIG_KP = 1.0          // แรงเสริมตอนโค้งหนัก
 let LOST_LIMIT = 40
-let TURN_IN = 190
-let TURN_OUT = -70
+let TURN_IN = 230
+let TURN_OUT = -90
 
 // ===== ตัวแปรระบบ =====
 let raw = 0
@@ -21,16 +21,17 @@ let error = 0
 let eF = 0
 let lastError = 0
 let lastDir = 1
-let deriv = 0
-let gain = 0
 let corr = 0
 let spd = 0
+let gain = 0
+let l = 0
+let r = 0
 let lostCount = 0
 
-function drive(l: number, r: number) {
+function drive(left: number, right: number) {
     zoombit.setMotorsSpeed(
-        Math.round(Math.constrain(l, -255, 255)) * DIR,
-        Math.round(Math.constrain(r, -255, 255)) * DIR
+        Math.round(Math.constrain(left, -255, 255)) * DIR,
+        Math.round(Math.constrain(right, -255, 255)) * DIR
     )
 }
 
@@ -55,17 +56,15 @@ basic.forever(function () {
         lostCount = 0
         e = Math.constrain((raw - 512) / 4, -100, 100)
 
-        // จำทิศล่าสุดไว้ใช้ตอนหลุดเส้น
         if (Math.abs(e) >= 10) {
             lastDir = e > 0 ? 1 : -1
         }
 
         if (Math.abs(e) < SOFT_ZONE) {
-            // ===== โหมดวิ่งตรง: นุ่ม ไม่สะบัด =====
+            // ===== โหมดวิ่งตรง: นุ่ม =====
             if (Math.abs(e) < DEADBAND) {
                 error = 0
             } else {
-                // ไล่แรงขึ้นต่อเนื่อง ไม่กระโดด
                 error = (Math.abs(e) - DEADBAND) * SOFT_ZONE / (SOFT_ZONE - DEADBAND)
                 if (e < 0) error = -error
             }
@@ -74,16 +73,28 @@ basic.forever(function () {
             gain = 0.6 + Math.abs(error) / SOFT_ZONE * 0.4
             corr = (KP * error + KD_STRAIGHT * (error - lastError)) * gain
         } else {
-            // ===== โหมดโค้ง: แรงเต็ม เหมือนเดิม =====
+            // ===== โหมดโค้ง: แรงเต็ม =====
             error = e
             eF = e
-            deriv = error - lastError
-            corr = KP * error + KD * deriv
-            corr += (error > 0 ? 1 : -1) * (Math.abs(error) - 50) * BIG_KP * (Math.abs(error) > 50 ? 1 : 0)
+            corr = KP * error + KD * (error - lastError)
+            corr += (error > 0 ? 1 : -1) * (Math.abs(error) - SOFT_ZONE) * BIG_KP
         }
 
-        spd = Math.max(MIN_SPD, BASE - Math.abs(error) * BRAKE_SLOW)
-        drive(spd + corr, spd - corr)
+        // ชะลอตามความหักของโค้ง (สเกลตาม BASE)
+        spd = BASE - (BASE - MIN_SPD) * Math.min(1, Math.abs(error) / CURVE_FULL)
+
+        l = spd + corr
+        r = spd - corr
+        // ล้อนอกเกิน 255 -> หักส่วนเกินจากล้อใน เพื่อรักษาส่วนต่าง
+        if (l > 255) {
+            r -= (l - 255)
+            l = 255
+        }
+        if (r > 255) {
+            l -= (r - 255)
+            r = 255
+        }
+        drive(l, r)
         lastError = error
     }
 })
