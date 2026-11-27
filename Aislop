@@ -1,16 +1,21 @@
 // ===== ปรับค่าตรงนี้ =====
-let DIR = -1          // รถถอยหลังก็ใช้ -1, ถ้าไปหน้าถูกแล้วเปลี่ยนเป็น 1
+let DIR = -1
 let BASE = 170
 let MIN_SPD = 70
 let KP = 1.6
 let KD = 5
-let LOST_LIMIT = 5    // ไม่เจอเส้นกี่รอบติดกันถึงจะหยุด (กันค่าเพี้ยนชั่วขณะ)
+let LOST_LIMIT = 5
+let DEADBAND = 10     // เบี่ยงน้อยกว่านี้ถือว่าอยู่กลางเส้น (ยิ่งมากยิ่งนิ่ง)
+let SOFT_ZONE = 40    // ต่ำกว่านี้จะลดแรงแก้ลง, เกินนี้ใช้เต็มแรง
+let D_SMOOTH = 0.3    // กรอง KD (ยิ่งน้อยยิ่งนุ่ม)
 
 // ===== ตัวแปรระบบ =====
 let raw = 0
 let error = 0
 let lastError = 0
 let deriv = 0
+let dFilt = 0
+let gain = 0
 let corr = 0
 let spd = 0
 let lostCount = 0
@@ -28,20 +33,30 @@ basic.forever(function () {
     raw = pins.analogReadPin(AnalogPin.P1)
 
     if (raw < 81) {
-        // ไม่เจอเส้น -> หยุด
         lostCount += 1
         if (lostCount >= LOST_LIMIT) {
             zoombit.brake()
         }
     } else if (raw > 941) {
-        // ดำทุกช่อง (สี่แยก) -> พุ่งตรง
         lostCount = 0
         drive(BASE, BASE)
     } else {
         lostCount = 0
         error = Math.constrain((raw - 512) / 4, -100, 100)
+
+        // 1) Deadband: เบี่ยงนิดเดียวไม่ต้องแก้
+        if (Math.abs(error) < DEADBAND) {
+            error = 0
+        }
+
+        // 2) กรองค่า derivative ไม่ให้สะบัด
         deriv = error - lastError
-        corr = KP * error + KD * deriv
+        dFilt = dFilt * (1 - D_SMOOTH) + deriv * D_SMOOTH
+
+        // 3) เบี่ยงน้อยใช้แรงแก้เบา, เบี่ยงมากใช้เต็มแรง
+        gain = Math.min(1, 0.35 + Math.abs(error) / SOFT_ZONE)
+
+        corr = (KP * error + KD * dFilt) * gain
         spd = Math.max(MIN_SPD, BASE - Math.abs(error))
         drive(spd + corr, spd - corr)
         lastError = error
