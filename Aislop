@@ -1,13 +1,17 @@
 // ===== ปรับค่าตรงนี้ =====
 let DIR = -1
-let BASE = 255
-let MIN_SPD = 70
+let BASE = 170
+let MIN_SPD = 60
 let KP = 1.6
-let KD = 3
-let LOST_LIMIT = 5
-let DEADBAND = 20   // เบี่ยงน้อยกว่านี้ถือว่าอยู่กลางเส้น (ยิ่งมากยิ่งนิ่ง)
-let SOFT_ZONE = 40    // ต่ำกว่านี้จะลดแรงแก้ลง, เกินนี้ใช้เต็มแรง
-let D_SMOOTH = 0.15   // กรอง KD (ยิ่งน้อยยิ่งนุ่ม)
+let KD = 5
+let DEADBAND = 10
+let D_SMOOTH = 0.1    // ใช้กรองเฉพาะตอนวิ่งตรง
+let SOFT_ZONE = 25    // เบี่ยงเกินนี้ = แรงเต็ม + derivative ไม่กรอง
+let BRAKE_SLOW = 1.5  // ชะลอตอนเข้าโค้ง (ยิ่งมากยิ่งช้า)
+let BIG_KP = 0.8      // แรงเสริมตอนเบี่ยงเกิน 50
+let LOST_LIMIT = 40   // หลุดเส้นกี่รอบถึงหยุด
+let TURN_IN = 190     // ล้อนอกตอนหลุดเส้น
+let TURN_OUT = -70    // ล้อในตอนหลุดเส้น
 
 // ===== ตัวแปรระบบ =====
 let raw = 0
@@ -33,9 +37,14 @@ basic.forever(function () {
     raw = pins.analogReadPin(AnalogPin.P1)
 
     if (raw < 81) {
+        // หลุดเส้น: เลี้ยวตามทางเดิมก่อน ถ้านานเกินค่อยหยุด
         lostCount += 1
         if (lostCount >= LOST_LIMIT) {
             zoombit.brake()
+        } else if (lastError < 0) {
+            drive(TURN_OUT, TURN_IN)
+        } else {
+            drive(TURN_IN, TURN_OUT)
         }
     } else if (raw > 941) {
         lostCount = 0
@@ -44,20 +53,28 @@ basic.forever(function () {
         lostCount = 0
         error = Math.constrain((raw - 512) / 4, -100, 100)
 
-        // 1) Deadband: เบี่ยงนิดเดียวไม่ต้องแก้
         if (Math.abs(error) < DEADBAND) {
             error = 0
         }
 
-        // 2) กรองค่า derivative ไม่ให้สะบัด
         deriv = error - lastError
-        dFilt = dFilt * (1 - D_SMOOTH) + deriv * D_SMOOTH
-
-        // 3) เบี่ยงน้อยใช้แรงแก้เบา, เบี่ยงมากใช้เต็มแรง
-        gain = Math.min(1, 0.35 + Math.abs(error) / SOFT_ZONE)
+        if (Math.abs(error) < SOFT_ZONE) {
+            // วิ่งตรง: กรองให้นิ่ง
+            dFilt = dFilt * (1 - D_SMOOTH) + deriv * D_SMOOTH
+            gain = 0.35 + Math.abs(error) / SOFT_ZONE * 0.65
+        } else {
+            // โค้ง: ใช้ค่าจริง แรงเต็ม
+            dFilt = deriv
+            gain = 1
+        }
 
         corr = (KP * error + KD * dFilt) * gain
-        spd = Math.max(MIN_SPD, BASE - Math.abs(error))
+        // เบี่ยงมากกว่า 50 เสริมแรงอีก
+        if (Math.abs(error) > 50) {
+            corr += (error > 0 ? 1 : -1) * (Math.abs(error) - 50) * BIG_KP
+        }
+
+        spd = Math.max(MIN_SPD, BASE - Math.abs(error) * BRAKE_SLOW)
         drive(spd + corr, spd - corr)
         lastError = error
     }
