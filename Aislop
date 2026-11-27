@@ -1,0 +1,44 @@
+// ===== ปรับค่าตรงนี้ =====
+let BASE = 170        // ความเร็วพื้นฐาน (0-255)
+let MIN_SPD = 70      // ความเร็วต่ำสุดตอนเข้าโค้ง
+let KP = 1.6          // แรงแก้ตามระยะเบี่ยง
+let KD = 5            // แรงหน่วงกันส่าย
+let PIVOT = 150       // ความแรงหมุนตัวตอนหลุดเส้น
+
+// ===== ตัวแปรระบบ =====
+let raw = 0
+let error = 0
+let lastError = 0
+let deriv = 0
+let corr = 0
+let spd = 0
+
+zoombit.setHeadlight(HeadlightChannel.All, zoombit.digitalStatePicker(DigitalIoState.On))
+
+basic.forever(function () {
+    raw = pins.analogReadPin(AnalogPin.P1)
+
+    if (raw > 941) {
+        // ดำทุกช่อง = สี่แยก/เส้นขวาง -> พุ่งตรงไปเลย
+        zoombit.setMotorsSpeed(BASE, BASE)
+    } else if (raw < 81) {
+        // หลุดเส้น -> หมุนตัวกลับไปหาเส้นตามด้านที่เห็นล่าสุด
+        if (lastError < 0) {
+            zoombit.setMotorsSpeed(-PIVOT, PIVOT + 30)
+        } else {
+            zoombit.setMotorsSpeed(PIVOT + 30, -PIVOT)
+        }
+    } else {
+        // ปกติ: PD control
+        error = Math.constrain((raw - 512) / 4, -100, 100)
+        deriv = error - lastError
+        corr = KP * error + KD * deriv
+        // โค้งยิ่งหักยิ่งชะลอ
+        spd = Math.max(MIN_SPD, BASE - Math.abs(error) * 1.0)
+        zoombit.setMotorsSpeed(
+            Math.round(Math.constrain(spd + corr, -255, 255)),
+            Math.round(Math.constrain(spd - corr, -255, 255))
+        )
+        lastError = error
+    }
+})
