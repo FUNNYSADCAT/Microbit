@@ -1,9 +1,10 @@
 // ===== ปรับค่าตรงนี้ =====
-let BASE = 170        // ความเร็วพื้นฐาน (0-255)
-let MIN_SPD = 70      // ความเร็วต่ำสุดตอนเข้าโค้ง
-let KP = 1.6          // แรงแก้ตามระยะเบี่ยง
-let KD = 5            // แรงหน่วงกันส่าย
-let PIVOT = 150       // ความแรงหมุนตัวตอนหลุดเส้น
+let DIR = -1          // รถถอยหลังก็ใช้ -1, ถ้าไปหน้าถูกแล้วเปลี่ยนเป็น 1
+let BASE = 170
+let MIN_SPD = 70
+let KP = 1.6
+let KD = 5
+let LOST_LIMIT = 5    // ไม่เจอเส้นกี่รอบติดกันถึงจะหยุด (กันค่าเพี้ยนชั่วขณะ)
 
 // ===== ตัวแปรระบบ =====
 let raw = 0
@@ -12,33 +13,37 @@ let lastError = 0
 let deriv = 0
 let corr = 0
 let spd = 0
+let lostCount = 0
+
+function drive(l: number, r: number) {
+    zoombit.setMotorsSpeed(
+        Math.round(Math.constrain(l, -255, 255)) * DIR,
+        Math.round(Math.constrain(r, -255, 255)) * DIR
+    )
+}
 
 zoombit.setHeadlight(HeadlightChannel.All, zoombit.digitalStatePicker(DigitalIoState.On))
 
 basic.forever(function () {
     raw = pins.analogReadPin(AnalogPin.P1)
 
-    if (raw > 941) {
-        // ดำทุกช่อง = สี่แยก/เส้นขวาง -> พุ่งตรงไปเลย
-        zoombit.setMotorsSpeed(BASE, BASE)
-    } else if (raw < 81) {
-        // หลุดเส้น -> หมุนตัวกลับไปหาเส้นตามด้านที่เห็นล่าสุด
-        if (lastError < 0) {
-            zoombit.setMotorsSpeed(-PIVOT, PIVOT + 30)
-        } else {
-            zoombit.setMotorsSpeed(PIVOT + 30, -PIVOT)
+    if (raw < 81) {
+        // ไม่เจอเส้น -> หยุด
+        lostCount += 1
+        if (lostCount >= LOST_LIMIT) {
+            zoombit.brake()
         }
+    } else if (raw > 941) {
+        // ดำทุกช่อง (สี่แยก) -> พุ่งตรง
+        lostCount = 0
+        drive(BASE, BASE)
     } else {
-        // ปกติ: PD control
+        lostCount = 0
         error = Math.constrain((raw - 512) / 4, -100, 100)
         deriv = error - lastError
         corr = KP * error + KD * deriv
-        // โค้งยิ่งหักยิ่งชะลอ
-        spd = Math.max(MIN_SPD, BASE - Math.abs(error) * 1.0)
-        zoombit.setMotorsSpeed(
-            Math.round(Math.constrain(spd + corr, -255, 255)),
-            Math.round(Math.constrain(spd - corr, -255, 255))
-        )
+        spd = Math.max(MIN_SPD, BASE - Math.abs(error))
+        drive(spd + corr, spd - corr)
         lastError = error
     }
 })
